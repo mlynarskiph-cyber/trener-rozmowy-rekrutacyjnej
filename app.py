@@ -1,9 +1,8 @@
 import os
 import re
-import html
 import base64
+import textwrap
 import requests
-import reportlab
 import streamlit as st
 
 from io import BytesIO
@@ -13,13 +12,8 @@ from openai import OpenAI
 from pypdf import PdfReader
 from docx import Document
 
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfbase import pdfmetrics
-from reportlab.lib import colors
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 
 
 # =============================
@@ -520,133 +514,194 @@ def clear_answer_widgets():
         del st.session_state[key]
 
 
-def register_pdf_fonts():
-    """
-    Rejestruje jedną czcionkę obsługującą polskie znaki.
-    Używamy jednej czcionki bez bold/italic, żeby uniknąć błędów ReportLab
-    typu: Can't map determine family/bold/italic.
-    """
-    reportlab_fonts_dir = os.path.join(os.path.dirname(reportlab.__file__), "fonts")
-
-    font_candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/local/share/fonts/DejaVuSans.ttf",
-        os.path.join(reportlab_fonts_dir, "Vera.ttf"),
-    ]
-
-    for font_path in font_candidates:
-        if os.path.exists(font_path):
-            try:
-                pdfmetrics.registerFont(TTFont("TRRFont", font_path))
-                return "TRRFont"
-            except Exception:
-                continue
-
-    return "Helvetica"
-
-
 def clean_text_for_pdf(line):
-    """
-    Czyści tekst do PDF.
-    Usuwamy znaczniki Markdown typu ** i *,
-    ale nie tworzymy tagów <b> ani <i>, bo one powodowały błąd ReportLab.
-    """
     line = line.replace("**", "")
     line = line.replace("*", "")
-    return html.escape(line)
+    line = line.replace("### ", "")
+    line = line.replace("## ", "")
+    line = line.replace("# ", "")
+    return line.strip()
 
 
-def build_pdf_report(title, content):
-    buffer = BytesIO()
-
-    pdf_font = register_pdf_fonts()
-
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=48,
-        leftMargin=48,
-        topMargin=52,
-        bottomMargin=52
-    )
-
-    styles = getSampleStyleSheet()
-
-    title_style = ParagraphStyle(
-        name="ReportTitle",
-        parent=styles["Title"],
-        fontName=pdf_font,
-        fontSize=18,
-        leading=24,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#1F4E79"),
-        spaceAfter=18
-    )
-
-    body_style = ParagraphStyle(
-        name="ReportBody",
-        parent=styles["BodyText"],
-        fontName=pdf_font,
-        fontSize=10.5,
-        leading=15,
-        textColor=colors.HexColor("#222222"),
-        spaceAfter=7
-    )
-
-    heading_style = ParagraphStyle(
-        name="ReportHeading",
-        parent=styles["Heading2"],
-        fontName=pdf_font,
-        fontSize=13,
-        leading=17,
-        textColor=colors.HexColor("#1F4E79"),
-        spaceBefore=10,
-        spaceAfter=6
-    )
-
-    small_style = ParagraphStyle(
-        name="ReportSmall",
-        parent=styles["BodyText"],
-        fontName=pdf_font,
-        fontSize=9,
-        leading=12,
-        textColor=colors.HexColor("#666666"),
-        alignment=TA_CENTER,
-        spaceAfter=14
-    )
-
-    story = []
-
-    story.append(Paragraph(clean_text_for_pdf(title), title_style))
-    story.append(Paragraph("Trener Rozmowy Rekrutacyjnej - Autor: Robert Młynarski", small_style))
-    story.append(Spacer(1, 8))
+def split_markdown_to_blocks(content):
+    blocks = []
 
     for raw_line in content.splitlines():
         line = raw_line.strip()
 
         if not line:
-            story.append(Spacer(1, 6))
+            blocks.append(("space", ""))
             continue
 
         if line.startswith("## "):
-            clean_line = line.replace("## ", "", 1).strip()
-            story.append(Paragraph(clean_text_for_pdf(clean_line), heading_style))
-
+            blocks.append(("heading", clean_text_for_pdf(line)))
         elif line.startswith("# "):
-            clean_line = line.replace("# ", "", 1).strip()
-            story.append(Paragraph(clean_text_for_pdf(clean_line), heading_style))
-
+            blocks.append(("heading", clean_text_for_pdf(line)))
         elif line.startswith("- "):
-            clean_line = "- " + line[2:].strip()
-            story.append(Paragraph(clean_text_for_pdf(clean_line), body_style))
-
-        elif re.match(r"^\d+\.\s+", line):
-            story.append(Paragraph(clean_text_for_pdf(line), body_style))
-
+            blocks.append(("bullet", clean_text_for_pdf(line)))
         else:
-            story.append(Paragraph(clean_text_for_pdf(line), body_style))
+            blocks.append(("body", clean_text_for_pdf(line)))
 
-    doc.build(story)
+    return blocks
+
+
+def build_pdf_report(title, content):
+    buffer = BytesIO()
+
+    # Ustawienie czcionki z obsługą polskich znaków
+    plt.rcParams["font.family"] = "DejaVu Sans"
+    plt.rcParams["pdf.fonttype"] = 42
+
+    page_width = 8.27
+    page_height = 11.69
+
+    y_start = 0.94
+    y_min = 0.06
+
+    x_body = 0.07
+    x_bullet = 0.085
+
+    max_chars_body = 92
+    max_chars_heading = 70
+
+    blocks = split_markdown_to_blocks(content)
+
+    with PdfPages(buffer) as pdf:
+        fig, ax = plt.subplots(figsize=(page_width, page_height))
+        ax.axis("off")
+        y = y_start
+
+        def new_page():
+            nonlocal fig, ax, y
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+            fig, ax = plt.subplots(figsize=(page_width, page_height))
+            ax.axis("off")
+            y = y_start
+
+        def draw_line(text, x, fontsize=10.5, weight="normal", color="#222222", line_height=0.033):
+            nonlocal y
+
+            if y < y_min:
+                new_page()
+
+            ax.text(
+                x,
+                y,
+                text,
+                fontsize=fontsize,
+                fontweight=weight,
+                color=color,
+                ha="left",
+                va="top",
+                family="DejaVu Sans"
+            )
+
+            y -= line_height
+
+        def draw_wrapped(text, x, max_chars, fontsize=10.5, weight="normal", color="#222222", line_height=0.033):
+            wrapped_lines = textwrap.wrap(
+                text,
+                width=max_chars,
+                break_long_words=False,
+                replace_whitespace=False
+            )
+
+            if not wrapped_lines:
+                return
+
+            for wrapped_line in wrapped_lines:
+                draw_line(
+                    wrapped_line,
+                    x=x,
+                    fontsize=fontsize,
+                    weight=weight,
+                    color=color,
+                    line_height=line_height
+                )
+
+        # Tytuł
+        ax.text(
+            0.5,
+            y,
+            title,
+            fontsize=18,
+            fontweight="bold",
+            color="#1F4E79",
+            ha="center",
+            va="top",
+            family="DejaVu Sans"
+        )
+
+        y -= 0.065
+
+        ax.text(
+            0.5,
+            y,
+            "Trener Rozmowy Rekrutacyjnej - Autor: Robert Młynarski",
+            fontsize=9.5,
+            color="#666666",
+            ha="center",
+            va="top",
+            family="DejaVu Sans"
+        )
+
+        y -= 0.075
+
+        for block_type, text in blocks:
+            if block_type == "space":
+                y -= 0.018
+                if y < y_min:
+                    new_page()
+                continue
+
+            if block_type == "heading":
+                y -= 0.012
+                if y < y_min:
+                    new_page()
+
+                draw_wrapped(
+                    text=text,
+                    x=x_body,
+                    max_chars=max_chars_heading,
+                    fontsize=13,
+                    weight="bold",
+                    color="#1F4E79",
+                    line_height=0.039
+                )
+                y -= 0.012
+
+            elif block_type == "bullet":
+                bullet_text = text
+                if bullet_text.startswith("- "):
+                    bullet_text = "• " + bullet_text[2:]
+
+                draw_wrapped(
+                    text=bullet_text,
+                    x=x_bullet,
+                    max_chars=max_chars_body,
+                    fontsize=10.5,
+                    weight="normal",
+                    color="#222222",
+                    line_height=0.033
+                )
+                y -= 0.009
+
+            else:
+                draw_wrapped(
+                    text=text,
+                    x=x_body,
+                    max_chars=max_chars_body,
+                    fontsize=10.5,
+                    weight="normal",
+                    color="#222222",
+                    line_height=0.033
+                )
+                y -= 0.010
+
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
 
     buffer.seek(0)
     return buffer.getvalue()

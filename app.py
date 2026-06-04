@@ -520,81 +520,46 @@ def clear_answer_widgets():
         del st.session_state[key]
 
 
-def build_text_report(title, content):
-    return f"""{title}
-
-{content}
-"""
-
-
 def register_pdf_fonts():
     """
-    Rejestruje czcionkę z obsługą polskich znaków.
-    Najpierw próbuje użyć czcionek systemowych DejaVu,
-    a jeśli ich nie ma, korzysta z czcionek Vera dostarczanych z ReportLab.
+    Rejestruje jedną czcionkę obsługującą polskie znaki.
+    Używamy jednej czcionki bez bold/italic, żeby uniknąć błędów ReportLab
+    typu: Can't map determine family/bold/italic.
     """
-
     reportlab_fonts_dir = os.path.join(os.path.dirname(reportlab.__file__), "fonts")
 
     font_candidates = [
-        (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        ),
-        (
-            "/usr/local/share/fonts/DejaVuSans.ttf",
-            "/usr/local/share/fonts/DejaVuSans-Bold.ttf"
-        ),
-        (
-            os.path.join(reportlab_fonts_dir, "Vera.ttf"),
-            os.path.join(reportlab_fonts_dir, "VeraBd.ttf")
-        ),
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/local/share/fonts/DejaVuSans.ttf",
+        os.path.join(reportlab_fonts_dir, "Vera.ttf"),
     ]
 
-    for normal_path, bold_path in font_candidates:
-        if os.path.exists(normal_path) and os.path.exists(bold_path):
+    for font_path in font_candidates:
+        if os.path.exists(font_path):
             try:
-                pdfmetrics.registerFont(TTFont("TRR-Regular", normal_path))
-                pdfmetrics.registerFont(TTFont("TRR-Bold", bold_path))
-
-                pdfmetrics.registerFontFamily(
-                    "TRR",
-                    normal="TRR-Regular",
-                    bold="TRR-Bold",
-                    italic="TRR-Regular",
-                    boldItalic="TRR-Bold"
-                )
-
-                return "TRR", "TRR-Bold"
+                pdfmetrics.registerFont(TTFont("TRRFont", font_path))
+                return "TRRFont"
             except Exception:
                 continue
 
-    # Ostateczny fallback — może nie obsłużyć polskich znaków,
-    # ale aplikacja nie przestanie działać.
-    return "Helvetica", "Helvetica-Bold"
+    return "Helvetica"
 
-def markdown_line_to_paragraph_text(line):
-    escaped = html.escape(line)
 
-    escaped = re.sub(
-        r"\*\*(.*?)\*\*",
-        r"<b>\1</b>",
-        escaped
-    )
-
-    escaped = re.sub(
-        r"\*(.*?)\*",
-        r"<i>\1</i>",
-        escaped
-    )
-
-    return escaped
+def clean_text_for_pdf(line):
+    """
+    Czyści tekst do PDF.
+    Usuwamy znaczniki Markdown typu ** i *,
+    ale nie tworzymy tagów <b> ani <i>, bo one powodowały błąd ReportLab.
+    """
+    line = line.replace("**", "")
+    line = line.replace("*", "")
+    return html.escape(line)
 
 
 def build_pdf_report(title, content):
     buffer = BytesIO()
 
-    normal_font, bold_font = register_pdf_fonts()
+    pdf_font = register_pdf_fonts()
 
     doc = SimpleDocTemplate(
         buffer,
@@ -610,7 +575,7 @@ def build_pdf_report(title, content):
     title_style = ParagraphStyle(
         name="ReportTitle",
         parent=styles["Title"],
-        fontName=bold_font,
+        fontName=pdf_font,
         fontSize=18,
         leading=24,
         alignment=TA_CENTER,
@@ -621,7 +586,7 @@ def build_pdf_report(title, content):
     body_style = ParagraphStyle(
         name="ReportBody",
         parent=styles["BodyText"],
-        fontName=normal_font,
+        fontName=pdf_font,
         fontSize=10.5,
         leading=15,
         textColor=colors.HexColor("#222222"),
@@ -631,7 +596,7 @@ def build_pdf_report(title, content):
     heading_style = ParagraphStyle(
         name="ReportHeading",
         parent=styles["Heading2"],
-        fontName=bold_font,
+        fontName=pdf_font,
         fontSize=13,
         leading=17,
         textColor=colors.HexColor("#1F4E79"),
@@ -642,7 +607,7 @@ def build_pdf_report(title, content):
     small_style = ParagraphStyle(
         name="ReportSmall",
         parent=styles["BodyText"],
-        fontName=normal_font,
+        fontName=pdf_font,
         fontSize=9,
         leading=12,
         textColor=colors.HexColor("#666666"),
@@ -652,8 +617,8 @@ def build_pdf_report(title, content):
 
     story = []
 
-    story.append(Paragraph(html.escape(title), title_style))
-    story.append(Paragraph("Trener Rozmowy Rekrutacyjnej • Autor: Robert Młynarski", small_style))
+    story.append(Paragraph(clean_text_for_pdf(title), title_style))
+    story.append(Paragraph("Trener Rozmowy Rekrutacyjnej - Autor: Robert Młynarski", small_style))
     story.append(Spacer(1, 8))
 
     for raw_line in content.splitlines():
@@ -665,17 +630,21 @@ def build_pdf_report(title, content):
 
         if line.startswith("## "):
             clean_line = line.replace("## ", "", 1).strip()
-            story.append(Paragraph(markdown_line_to_paragraph_text(clean_line), heading_style))
+            story.append(Paragraph(clean_text_for_pdf(clean_line), heading_style))
+
         elif line.startswith("# "):
             clean_line = line.replace("# ", "", 1).strip()
-            story.append(Paragraph(markdown_line_to_paragraph_text(clean_line), heading_style))
+            story.append(Paragraph(clean_text_for_pdf(clean_line), heading_style))
+
         elif line.startswith("- "):
-            clean_line = "• " + line[2:].strip()
-            story.append(Paragraph(markdown_line_to_paragraph_text(clean_line), body_style))
+            clean_line = "- " + line[2:].strip()
+            story.append(Paragraph(clean_text_for_pdf(clean_line), body_style))
+
         elif re.match(r"^\d+\.\s+", line):
-            story.append(Paragraph(markdown_line_to_paragraph_text(line), body_style))
+            story.append(Paragraph(clean_text_for_pdf(line), body_style))
+
         else:
-            story.append(Paragraph(markdown_line_to_paragraph_text(line), body_style))
+            story.append(Paragraph(clean_text_for_pdf(line), body_style))
 
     doc.build(story)
 

@@ -17,7 +17,6 @@ load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Możesz zmienić model np. na "gpt-5.5", jeśli chcesz
 MODEL = "gpt-4.1-mini"
 
 st.set_page_config(
@@ -325,6 +324,7 @@ def render_stepper(current_step):
     for idx, (key, label) in enumerate(labels):
         active = "active" if idx <= current_index else ""
         html += f'<div class="step-pill {active}">{label}</div>'
+
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
@@ -493,8 +493,8 @@ def clear_answer_widgets():
         del st.session_state[key]
 
 
-def build_markdown_report(title, content):
-    return f"""# {title}
+def build_text_report(title, content):
+    return f"""{title}
 
 {content}
 """
@@ -509,6 +509,7 @@ def ask_ai(prompt):
         model=MODEL,
         input=prompt
     )
+
     return response.output_text
 
 
@@ -561,6 +562,7 @@ Podaj konkretne rzeczy do przygotowania.
 ## 7. Czy CV wymaga dopasowania do tej oferty?
 Oceń krótko, czy CV wygląda na dobrze dopasowane do tej konkretnej oferty.
 """
+
     return ask_ai(prompt)
 
 
@@ -702,6 +704,7 @@ Przygotuj feedback w języku polskim według struktury:
 
 Podaj ocenę i krótko ją uzasadnij.
 """
+
     return ask_ai(prompt)
 
 
@@ -760,11 +763,13 @@ if st.session_state.step == "input":
             "CV kandydata",
             "Wgraj CV w formacie PDF, DOCX albo TXT."
         )
+
         uploaded_cv = st.file_uploader(
             "Wgraj CV",
             type=["pdf", "docx", "txt"],
             label_visibility="collapsed"
         )
+
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown('<div class="section-box">', unsafe_allow_html=True)
@@ -799,6 +804,7 @@ if st.session_state.step == "input":
                 "Link do ogłoszenia",
                 placeholder="https://..."
             )
+
             st.info(
                 "Aplikacja spróbuje pobrać treść z linku. "
                 "Jeśli portal blokuje pobieranie, użyj tekstu albo zrzutu ekranu."
@@ -846,6 +852,7 @@ if st.session_state.step == "input":
         )
 
         analyze_clicked = st.button("Przeanalizuj CV i ogłoszenie")
+
         st.markdown("</div>", unsafe_allow_html=True)
 
     if analyze_clicked:
@@ -942,29 +949,32 @@ elif st.session_state.step == "analysis":
                 value=st.session_state.job_text,
                 height=320
             )
+
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col2:
         st.markdown('<div class="section-box">', unsafe_allow_html=True)
         section_header(
-            "⚡ Akcje",
+            "⚡",
+            "Akcje",
             "Możesz przejść do symulacji albo wrócić i poprawić dane wejściowe."
         )
 
-        analysis_file = build_markdown_report(
+        analysis_file = build_text_report(
             "Analiza przed rozmową kwalifikacyjną",
             st.session_state.analysis
         )
 
         st.download_button(
-            label="Pobierz analizę jako Markdown",
+            label="Pobierz analizę jako plik tekstowy",
             data=analysis_file,
-            file_name="analiza_przed_rozmowa.md",
-            mime="text/markdown"
+            file_name="analiza_przed_rozmowa.txt",
+            mime="text/plain"
         )
 
         start_simulation = st.button("Rozpocznij symulację rozmowy")
         go_back = st.button("Wróć i popraw dane")
+
         st.markdown("</div>", unsafe_allow_html=True)
 
         if start_simulation:
@@ -1022,6 +1032,7 @@ elif st.session_state.step == "interview":
             f'<div class="progress-caption">Postęp: pytanie {current + 1} z {len(questions)}</div>',
             unsafe_allow_html=True
         )
+
         st.progress(progress_value)
 
         st.markdown(f"""
@@ -1039,8 +1050,10 @@ elif st.session_state.step == "interview":
         )
 
         col_a, col_b = st.columns(2, gap="large")
+
         with col_a:
             next_clicked = st.button("Zapisz odpowiedź i przejdź dalej")
+
         with col_b:
             finish_early = st.button("Zakończ wcześniej i przejdź do feedbacku")
 
@@ -1082,6 +1095,7 @@ elif st.session_state.step == "interview":
 
     else:
         st.success("Rozmowa została zakończona. Możesz teraz wygenerować feedback końcowy.")
+
         if st.button("Wygeneruj feedback końcowy"):
             with st.spinner("Analizuję całą rozmowę..."):
                 st.session_state.feedback = generate_final_feedback(
@@ -1126,20 +1140,21 @@ elif st.session_state.step == "feedback":
             "Możesz pobrać feedback, powtórzyć rozmowę albo zacząć nową analizę."
         )
 
-        feedback_file = build_markdown_report(
+        feedback_file = build_text_report(
             "Feedback po symulacji rozmowy kwalifikacyjnej",
             st.session_state.feedback
         )
 
         st.download_button(
-            label="Pobierz feedback jako Markdown",
+            label="Pobierz feedback jako plik tekstowy",
             data=feedback_file,
-            file_name="feedback_rozmowa.md",
-            mime="text/markdown"
+            file_name="feedback_rozmowa.txt",
+            mime="text/plain"
         )
 
         repeat_interview = st.button("Powtórz rozmowę z tym samym ogłoszeniem")
         start_over = st.button("Zacznij od nowa")
+
         st.markdown("</div>", unsafe_allow_html=True)
 
         if repeat_interview:
@@ -1152,4 +1167,5 @@ elif st.session_state.step == "feedback":
         if start_over:
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
+
             st.rerun()

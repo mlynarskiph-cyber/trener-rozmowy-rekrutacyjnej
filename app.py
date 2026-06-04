@@ -1,13 +1,25 @@
 import os
 import re
+import html
 import base64
 import requests
 import streamlit as st
+
+from io import BytesIO
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from openai import OpenAI
 from pypdf import PdfReader
 from docx import Document
+
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase import pdfmetrics
+from reportlab.lib import colors
+
 
 # =============================
 # Konfiguracja
@@ -15,7 +27,20 @@ from docx import Document
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def get_openai_api_key():
+    key = os.getenv("OPENAI_API_KEY")
+
+    if not key:
+        try:
+            key = st.secrets.get("OPENAI_API_KEY", None)
+        except Exception:
+            key = None
+
+    return key
+
+
+client = OpenAI(api_key=get_openai_api_key())
 
 MODEL = "gpt-4.1-mini"
 
@@ -25,6 +50,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 
 # =============================
 # Styl graficzny
@@ -318,15 +344,15 @@ def render_stepper(current_step):
         ("feedback", "4. Feedback"),
     ]
 
-    html = '<div class="stepper">'
+    html_code = '<div class="stepper">'
     current_index = [k for k, _ in labels].index(current_step)
 
     for idx, (key, label) in enumerate(labels):
         active = "active" if idx <= current_index else ""
-        html += f'<div class="step-pill {active}">{label}</div>'
+        html_code += f'<div class="step-pill {active}">{label}</div>'
 
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
+    html_code += "</div>"
+    st.markdown(html_code, unsafe_allow_html=True)
 
 
 def section_header(icon, title, subtitle=""):
@@ -498,6 +524,144 @@ def build_text_report(title, content):
 
 {content}
 """
+
+
+def register_pdf_fonts():
+    font_candidates = [
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        ),
+        (
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+        ),
+        (
+            "/Library/Fonts/Arial Unicode.ttf",
+            "/Library/Fonts/Arial Unicode.ttf"
+        ),
+    ]
+
+    for normal_path, bold_path in font_candidates:
+        if os.path.exists(normal_path) and os.path.exists(bold_path):
+            try:
+                pdfmetrics.registerFont(TTFont("AppFont", normal_path))
+                pdfmetrics.registerFont(TTFont("AppFont-Bold", bold_path))
+                return "AppFont", "AppFont-Bold"
+            except Exception:
+                continue
+
+    return "Helvetica", "Helvetica-Bold"
+
+
+def markdown_line_to_paragraph_text(line):
+    escaped = html.escape(line)
+
+    escaped = re.sub(
+        r"\*\*(.*?)\*\*",
+        r"<b>\1</b>",
+        escaped
+    )
+
+    escaped = re.sub(
+        r"\*(.*?)\*",
+        r"<i>\1</i>",
+        escaped
+    )
+
+    return escaped
+
+
+def build_pdf_report(title, content):
+    buffer = BytesIO()
+
+    normal_font, bold_font = register_pdf_fonts()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=48,
+        leftMargin=48,
+        topMargin=52,
+        bottomMargin=52
+    )
+
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        name="ReportTitle",
+        parent=styles["Title"],
+        fontName=bold_font,
+        fontSize=18,
+        leading=24,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#1F4E79"),
+        spaceAfter=18
+    )
+
+    body_style = ParagraphStyle(
+        name="ReportBody",
+        parent=styles["BodyText"],
+        fontName=normal_font,
+        fontSize=10.5,
+        leading=15,
+        textColor=colors.HexColor("#222222"),
+        spaceAfter=7
+    )
+
+    heading_style = ParagraphStyle(
+        name="ReportHeading",
+        parent=styles["Heading2"],
+        fontName=bold_font,
+        fontSize=13,
+        leading=17,
+        textColor=colors.HexColor("#1F4E79"),
+        spaceBefore=10,
+        spaceAfter=6
+    )
+
+    small_style = ParagraphStyle(
+        name="ReportSmall",
+        parent=styles["BodyText"],
+        fontName=normal_font,
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#666666"),
+        alignment=TA_CENTER,
+        spaceAfter=14
+    )
+
+    story = []
+
+    story.append(Paragraph(html.escape(title), title_style))
+    story.append(Paragraph("Trener Rozmowy Rekrutacyjnej • Autor: Robert Młynarski", small_style))
+    story.append(Spacer(1, 8))
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+
+        if not line:
+            story.append(Spacer(1, 6))
+            continue
+
+        if line.startswith("## "):
+            clean_line = line.replace("## ", "", 1).strip()
+            story.append(Paragraph(markdown_line_to_paragraph_text(clean_line), heading_style))
+        elif line.startswith("# "):
+            clean_line = line.replace("# ", "", 1).strip()
+            story.append(Paragraph(markdown_line_to_paragraph_text(clean_line), heading_style))
+        elif line.startswith("- "):
+            clean_line = "• " + line[2:].strip()
+            story.append(Paragraph(markdown_line_to_paragraph_text(clean_line), body_style))
+        elif re.match(r"^\d+\.\s+", line):
+            story.append(Paragraph(markdown_line_to_paragraph_text(line), body_style))
+        else:
+            story.append(Paragraph(markdown_line_to_paragraph_text(line), body_style))
+
+    doc.build(story)
+
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 # =============================
@@ -749,6 +913,7 @@ render_sidebar()
 render_hero()
 render_stepper(st.session_state.step)
 
+
 # =============================
 # Ekran 1: Dane wejściowe
 # =============================
@@ -960,16 +1125,16 @@ elif st.session_state.step == "analysis":
             "Możesz przejść do symulacji albo wrócić i poprawić dane wejściowe."
         )
 
-        analysis_file = build_text_report(
+        analysis_pdf = build_pdf_report(
             "Analiza przed rozmową kwalifikacyjną",
             st.session_state.analysis
         )
 
         st.download_button(
-            label="Pobierz analizę jako plik tekstowy",
-            data=analysis_file,
-            file_name="analiza_przed_rozmowa.txt",
-            mime="text/plain"
+            label="Pobierz analizę jako PDF",
+            data=analysis_pdf,
+            file_name="analiza_przed_rozmowa.pdf",
+            mime="application/pdf"
         )
 
         start_simulation = st.button("Rozpocznij symulację rozmowy")
@@ -1140,16 +1305,16 @@ elif st.session_state.step == "feedback":
             "Możesz pobrać feedback, powtórzyć rozmowę albo zacząć nową analizę."
         )
 
-        feedback_file = build_text_report(
+        feedback_pdf = build_pdf_report(
             "Feedback po symulacji rozmowy kwalifikacyjnej",
             st.session_state.feedback
         )
 
         st.download_button(
-            label="Pobierz feedback jako plik tekstowy",
-            data=feedback_file,
-            file_name="feedback_rozmowa.txt",
-            mime="text/plain"
+            label="Pobierz feedback jako PDF",
+            data=feedback_pdf,
+            file_name="feedback_rozmowa.pdf",
+            mime="application/pdf"
         )
 
         repeat_interview = st.button("Powtórz rozmowę z tym samym ogłoszeniem")

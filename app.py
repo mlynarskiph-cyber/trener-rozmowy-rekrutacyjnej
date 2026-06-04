@@ -3,6 +3,7 @@ import re
 import html
 import base64
 import requests
+import reportlab
 import streamlit as st
 
 from io import BytesIO
@@ -527,32 +528,50 @@ def build_text_report(title, content):
 
 
 def register_pdf_fonts():
+    """
+    Rejestruje czcionkę z obsługą polskich znaków.
+    Najpierw próbuje użyć czcionek systemowych DejaVu,
+    a jeśli ich nie ma, korzysta z czcionek Vera dostarczanych z ReportLab.
+    """
+
+    reportlab_fonts_dir = os.path.join(os.path.dirname(reportlab.__file__), "fonts")
+
     font_candidates = [
         (
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         ),
         (
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+            "/usr/local/share/fonts/DejaVuSans.ttf",
+            "/usr/local/share/fonts/DejaVuSans-Bold.ttf"
         ),
         (
-            "/Library/Fonts/Arial Unicode.ttf",
-            "/Library/Fonts/Arial Unicode.ttf"
+            os.path.join(reportlab_fonts_dir, "Vera.ttf"),
+            os.path.join(reportlab_fonts_dir, "VeraBd.ttf")
         ),
     ]
 
     for normal_path, bold_path in font_candidates:
         if os.path.exists(normal_path) and os.path.exists(bold_path):
             try:
-                pdfmetrics.registerFont(TTFont("AppFont", normal_path))
-                pdfmetrics.registerFont(TTFont("AppFont-Bold", bold_path))
-                return "AppFont", "AppFont-Bold"
+                pdfmetrics.registerFont(TTFont("TRR-Regular", normal_path))
+                pdfmetrics.registerFont(TTFont("TRR-Bold", bold_path))
+
+                pdfmetrics.registerFontFamily(
+                    "TRR",
+                    normal="TRR-Regular",
+                    bold="TRR-Bold",
+                    italic="TRR-Regular",
+                    boldItalic="TRR-Bold"
+                )
+
+                return "TRR", "TRR-Bold"
             except Exception:
                 continue
 
+    # Ostateczny fallback — może nie obsłużyć polskich znaków,
+    # ale aplikacja nie przestanie działać.
     return "Helvetica", "Helvetica-Bold"
-
 
 def markdown_line_to_paragraph_text(line):
     escaped = html.escape(line)
